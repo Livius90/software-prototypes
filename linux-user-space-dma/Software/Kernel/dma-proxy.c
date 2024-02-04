@@ -429,6 +429,7 @@ static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_
 	ssize_t rc = 0;
 	int read_size = 0;
 	unsigned long ret = 0;
+	enum proxy_status bd_status = PROXY_ERROR;
 	struct dma_proxy_channel *pchannel_p = (struct dma_proxy_channel *)file->private_data;
 	int bytes_count = count;
 	int bytes_sum = 0;
@@ -469,12 +470,17 @@ static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_
 			if(ret != 0)
 			{
 				printk(KERN_ERR "%s: can't read() DMA buffer, could not be copied %lu bytes\n", pchannel_p->name, ret);
-				return -EPERM;
+				/* force to break while loop in next loop cycle */
+				bytes_sum = bytes_count;
 			}
-			read_size += length_byte;
+			else
+			{
+				read_size += length_byte;
+			}
 		}
 
-		if (pchannel_p->buffer_table_p[bd].status == PROXY_NO_ERROR)
+		bd_status = pchannel_p->buffer_table_p[bd].status;
+		if (bd_status == PROXY_NO_ERROR)
 		{
 			bytes_sum = read_size;
 			i++;
@@ -487,10 +493,18 @@ static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_
 		}
 	}
 	
-	if (read_size == 0)
+	if ((read_size == 0) && (bd_status != PROXY_NO_ERROR))
 	{
-		printk(KERN_ERR "%s: can't read(), no data and timeout or error occurred\n", pchannel_p->name);
-		return -EPERM;
+		if (bd_status == PROXY_TIMEOUT)
+		{
+			printk(KERN_ERR "%s: can't read(), no data and timeout occurred\n", pchannel_p->name);
+			return -ETIMEDOUT;
+		}
+		else
+		{
+			printk(KERN_ERR "%s: can't read(), error occurred\n", pchannel_p->name);
+			return -EPERM;
+		}
 	}
 	
 	rc = read_size;
@@ -502,7 +516,7 @@ static ssize_t write(struct file *file, const char __user *userbuf, size_t count
 	ssize_t rc = 0;
 	unsigned long ret = 0;
 	int write_size = 0;
-	enum proxy_status bd_status = PROXY_NO_ERROR;
+	enum proxy_status bd_status = PROXY_ERROR;
 	struct dma_proxy_channel *pchannel_p = (struct dma_proxy_channel *)file->private_data;
 	int bytes_count = count;
 	int bytes_sum = 0;
@@ -573,8 +587,16 @@ static ssize_t write(struct file *file, const char __user *userbuf, size_t count
 
 	if (bd_status != PROXY_NO_ERROR)
 	{
-		printk(KERN_ERR "%s: can't write(), no data and timeout or error occurred\n", pchannel_p->name);
-		return -EPERM;
+		if (bd_status == PROXY_TIMEOUT)
+		{
+			printk(KERN_ERR "%s: can't write(), no data and timeout occurred\n", pchannel_p->name);
+			return -ETIMEDOUT;
+		}
+		else
+		{
+			printk(KERN_ERR "%s: can't write(), error occurred\n", pchannel_p->name);
+			return -EPERM;
+		}
 	}
 	
 	rc = write_size;
