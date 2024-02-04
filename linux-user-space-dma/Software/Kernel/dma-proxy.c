@@ -117,6 +117,7 @@
 #include <linux/of_dma.h>
 #include <linux/ioctl.h>
 #include <linux/uaccess.h>
+#include <linux/mutex.h>
 
 #include "dma-proxy.h"
 
@@ -164,6 +165,7 @@ struct dma_proxy_channel {
 
 	u32 direction;						/* DMA_MEM_TO_DEV or DMA_DEV_TO_MEM */
 	unsigned int timeout;				/* DMA transfer timeout */
+	struct mutex timeout_mutex;			/* mutex to set timeout value in safe */
 
 	int bdindex;
 };
@@ -238,13 +240,19 @@ static void start_transfer(struct dma_proxy_channel *pchannel_p)
  */
 static void wait_for_transfer(struct dma_proxy_channel *pchannel_p)
 {
-	unsigned long timeout = msecs_to_jiffies(pchannel_p->timeout);
+	unsigned long timeout = 0;
+	unsigned int channel_timeout = 0;
 	enum dma_status status;
 	int bdindex = pchannel_p->bdindex;
 	struct dma_tx_state	state;
-
+	
+	mutex_lock(&pchannel_p->timeout_mutex);
+	channel_timeout = pchannel_p->timeout;
+	mutex_unlock(&pchannel_p->timeout_mutex);
+	
+	timeout = msecs_to_jiffies(channel_timeout);
 	pchannel_p->buffer_table_p[bdindex].status = PROXY_BUSY;
-
+	
 	/* Wait for the transaction to complete, or timeout, or get an error
 	 */
 	timeout = wait_for_completion_timeout(&pchannel_p->bdtable[bdindex].cmp, timeout);
@@ -406,8 +414,10 @@ static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			wait_for_transfer(pchannel_p);
 			break;
 		case TIMEOUT_XFER:
-			printk(KERN_INFO "DMA transfer timeout set: %d msec\n", value);
+			mutex_lock(&pchannel_p->timeout_mutex);
 			pchannel_p->timeout = (unsigned int)value;
+			mutex_unlock(&pchannel_p->timeout_mutex);
+			printk(KERN_INFO "%s: DMA transfer timeout set: %d msec\n", pchannel_p->name, value);
 			break;
 	}
 
@@ -699,6 +709,7 @@ static int create_channel(struct platform_device *pdev, struct dma_proxy_channel
 	strcpy(pchannel_p->name, name);
 	pchannel_p->direction = direction;
 	pchannel_p->timeout = TIMEOUT_DEFAULT_MSECS;
+	mutex_init(&pchannel_p->timeout_mutex);
 
 	/* Allocate DMA memory that will be shared/mapped by user space, allocating
 	 * a set of buffers for the channel with user space specifying which buffer
@@ -742,6 +753,7 @@ static int dma_proxy_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 
 	printk(KERN_INFO "dma_proxy module initialized\n");
+	printk(KERN_INFO "TIMEOUT_XFER ioctl() command: 0x%X\n", TIMEOUT_XFER);
 	
 	lp = (struct dma_proxy *) devm_kmalloc(&pdev->dev, sizeof(struct dma_proxy), GFP_KERNEL);
 	if (!lp) {
@@ -825,6 +837,10 @@ static int dma_proxy_remove(struct platform_device *pdev)
 		if (lp->channels[i].channel_p) {
 			lp->channels[i].channel_p->device->device_terminate_all(lp->channels[i].channel_p);
 			dma_release_channel(lp->channels[i].channel_p);
+			
+			if (!mutex_is_locked(&lp->channels[i].timeout_mutex)) {
+				printk(KERN_WARNING "%s: timeout_mutex unlock is missed!!\n", &lp->channels[i].name);
+			}
 		}
 	return 0;
 }
@@ -847,7 +863,6 @@ static struct platform_driver dma_proxy_driver = {
 static int __init dma_proxy_init(void)
 {
 	return platform_driver_register(&dma_proxy_driver);
-
 }
 
 static void __exit dma_proxy_exit(void)
