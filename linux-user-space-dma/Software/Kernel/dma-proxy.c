@@ -839,7 +839,7 @@ static int dma_proxy_remove(struct platform_device *pdev)
 			dma_release_channel(lp->channels[i].channel_p);
 			
 			if (!mutex_is_locked(&lp->channels[i].timeout_mutex)) {
-				printk(KERN_WARNING "%s: timeout_mutex unlock is missed!!\n", &lp->channels[i].name);
+				printk(KERN_WARNING "%s: timeout_mutex unlock is missed!\n", &lp->channels[i].name);
 			}
 		}
 	return 0;
