@@ -846,7 +846,7 @@ static int dma_proxy_remove(struct platform_device *pdev)
 	 * channel except for the last channel. Handle the last
 	 * channel seperately.
 	 */
-	for (i = 0; i < lp->channel_count; i++) { 
+	for (i = 0; i < lp->channel_count; i++) {
 		if (lp->channels[i].proxy_device_p)
 			cdevice_exit(&lp->channels[i]);
 		total_count--;
@@ -855,15 +855,20 @@ static int dma_proxy_remove(struct platform_device *pdev)
 	 * for the DMA transfers. The DMA buffers are using managed
 	 * memory such that it's automatically done.
 	 */
-	for (i = 0; i < lp->channel_count; i++)
+	for (i = 0; i < lp->channel_count; i++) {
 		if (lp->channels[i].channel_p) {
 			lp->channels[i].channel_p->device->device_terminate_all(lp->channels[i].channel_p);
 			dma_release_channel(lp->channels[i].channel_p);
 			
 			if (!mutex_is_locked(&lp->channels[i].timeout_mutex)) {
-				printk(KERN_WARNING "%s: timeout_mutex has not been unlocked!\n", lp->channels[i].name);
+				printk(KERN_INFO "%s: timeout_mutex has not been unlocked!\n", lp->channels[i].name);
+				mutex_unlock(&lp->channels[i].timeout_mutex);
+				printk(KERN_INFO "%s: timeout_mutex has been unlocked!\n", lp->channels[i].name);
 			}
+			
+			mutex_destroy(&lp->channels[i].timeout_mutex);
 		}
+	}
 	return 0;
 }
 
